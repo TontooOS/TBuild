@@ -1,0 +1,6 @@
+{
+  "bundle_id": "com.tontoo.helloworld",
+  "name": "HelloWorld",
+  "version": "0.1.0",
+  "icon": "Resources/icon.png"
+}

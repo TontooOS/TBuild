@@ -1,0 +1,15 @@
+{
+  "window.title": "Tontoo Installer",
+  "where.title": "Where do you want to install it?",
+  "option.all": "All Users",
+  "option.self": "My Self ({user})",
+  "license.title": "License Agreement",
+  "install.title": "Ready to install {name}",
+  "done.success": "{name} was installed successfully to {target}.",
+  "done.error": "Installation failed: {error}",
+  "button.next": "Next",
+  "button.back": "Back",
+  "button.accept": "Accept",
+  "button.install": "Install",
+  "button.close": "Close"
+}

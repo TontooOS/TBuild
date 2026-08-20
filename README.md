@@ -1,6 +1,28 @@
-# Tontoo Name
+# TBuild
 
-Description
+TontooOS app builder — compiles Rust app projects into `.app` bundles and
+self-extracting `.tinstaller` installers.
+
+## Wiki
+
+- [wiki/MAIN.md](wiki/MAIN.md) – feature index and quick start
+- [wiki/App.md](wiki/App.md) – `.app` bundle builder
+- [wiki/Tinstaller.md](wiki/Tinstaller.md) – `.tinstaller` installer maker
+
+## Usage
+
+```bash
+cargo build --release
+
+# build the .app bundle
+./target/release/tbuild app example/helloworld
+
+# build the .tinstaller installer
+./target/release/tbuild tinstaller example/helloworld
+```
+
+An app project is a Rust crate directory containing `tontoo.proj`,
+`Resources/` and `lang/en_us.json` + `lang/de_de.json`.
 
 ## Made for TontooOS
 
