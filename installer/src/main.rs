@@ -1,16 +1,14 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Cursor;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use uikit::prelude::*;
-use uikit::widget::WidgetId;
-
-use gtk::prelude::*;
+use tontooui::prelude::*;
 
 const MAGIC: &[u8; 8] = b"TONTINST";
 const SYSTEM_INSTALL_ARG: &str = "--install-system";
+const LICENSE_WRAP_CHARS: usize = 72;
 
 #[derive(Serialize, Deserialize)]
 struct Footer {
@@ -59,12 +57,47 @@ fn read_payload() -> Result<Payload, String> {
     Ok(Payload { footer, app, license })
 }
 
-fn extract_to(payload: &Payload, target: &Path) -> Result<(), String> {
-    std::fs::create_dir_all(target).map_err(|e| format!("cannot create '{}': {}", target.display(), e))?;
+/// Installs the bundled `.app` as a directory bundle below `target`.
+/// The ZIP is extracted into a hidden staging directory first and renamed
+/// into place, so a crash never leaves a half-installed bundle behind.
+fn install_bundle(payload: &Payload, target: &Path) -> Result<PathBuf, String> {
+    std::fs::create_dir_all(target)
+        .map_err(|e| format!("cannot create '{}': {}", target.display(), e))?;
+
+    let staging = target.join(format!(
+        ".{}.install-{}",
+        payload.footer.name,
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&staging);
+    std::fs::create_dir_all(&staging)
+        .map_err(|e| format!("cannot create '{}': {}", staging.display(), e))?;
+
     let cursor = Cursor::new(&payload.app);
-    let mut archive = zip::ZipArchive::new(cursor).map_err(|e| format!("bad .app payload: {}", e))?;
-    archive.extract(target).map_err(|e| format!("extract failed: {}", e))?;
-    Ok(())
+    let mut archive =
+        zip::ZipArchive::new(cursor).map_err(|e| format!("bad .app payload: {}", e))?;
+    archive
+        .extract(&staging)
+        .map_err(|e| format!("extract failed: {}", e))?;
+
+    // TBuild zips contain a single top-level "<Name>.app" directory.
+    let src = staging.join(format!("{}.app", payload.footer.name));
+    let src = if src.is_dir() { src } else { staging.clone() };
+
+    let dest = target.join(format!("{}.app", payload.footer.name));
+    if dest.is_dir() {
+        std::fs::remove_dir_all(&dest)
+            .map_err(|e| format!("cannot replace '{}': {}", dest.display(), e))?;
+    } else if dest.is_file() {
+        // Clean up single-file (zipped) installs from older versions.
+        std::fs::remove_file(&dest)
+            .map_err(|e| format!("cannot replace '{}': {}", dest.display(), e))?;
+    }
+
+    std::fs::rename(&src, &dest)
+        .map_err(|e| format!("cannot finalize '{}': {}", dest.display(), e))?;
+    let _ = std::fs::remove_dir_all(&staging);
+    Ok(dest)
 }
 
 fn detect_locale() -> &'static str {
@@ -111,6 +144,69 @@ fn username() -> String {
     std::env::var("USER").unwrap_or_else(|_| "user".to_string())
 }
 
+fn detect_scheme() -> ColorScheme {
+    let config_dir = std::env::var("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            let home = std::env::var("HOME").unwrap_or_default();
+            PathBuf::from(home).join(".config")
+        });
+    let theme_file = config_dir.join("tontoo").join("theme.conf");
+    if let Ok(content) = std::fs::read_to_string(&theme_file) {
+        for line in content.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            if let Some((key, value)) = line.split_once('=') {
+                if key.trim() == "color-scheme" && value.trim() == "light" {
+                    return ColorScheme::Light;
+                }
+            }
+        }
+    }
+    ColorScheme::Dark
+}
+
+/// Greedy word wrap so the plain-text license fits the scroll view width.
+fn wrap_text(text: &str, max_chars: usize) -> String {
+    let mut result = String::new();
+    for line in text.lines() {
+        let mut current = String::new();
+        for word in line.split_whitespace() {
+            loop {
+                let fits = current.chars().count() + 1 + word.chars().count() <= max_chars;
+                if fits || current.is_empty() {
+                    break;
+                }
+                result.push_str(&current);
+                result.push('\n');
+                current.clear();
+            }
+            if word.chars().count() > max_chars {
+                if !current.is_empty() {
+                    result.push_str(&current);
+                    result.push('\n');
+                    current.clear();
+                }
+                let chars: Vec<char> = word.chars().collect();
+                for chunk in chars.chunks(max_chars) {
+                    result.extend(chunk);
+                    result.push('\n');
+                }
+                continue;
+            }
+            if !current.is_empty() {
+                current.push(' ');
+            }
+            current.push_str(word);
+        }
+        result.push_str(&current);
+        result.push('\n');
+    }
+    result
+}
+
 enum Screen {
     Destination,
     License,
@@ -130,139 +226,139 @@ impl InstallerDelegate {
     fn next(&self) -> String {
         t(&self.lang, "button.next", &[])
     }
+
     fn back(&self) -> String {
         t(&self.lang, "button.back", &[])
     }
 
-    fn option_button(&self, key: &str, selected: bool) -> Button {
-        let label = t(&self.lang, key, &[("user", &username())]);
-        let mut btn = Button::new(label).corner_radius(10.0);
-        if selected {
-            btn = btn.background(Color::from_hex("#FF6B2B").unwrap()).text_color(Color::WHITE);
-        } else {
-            btn = btn
-                .background(Color::new(0.25, 0.25, 0.27, 1.0))
-                .text_color(Color::new(0.92, 0.92, 0.94, 1.0));
-        }
-        btn
+    fn accent(&self) -> Color {
+        Color::from_hex("#FF6B2B").unwrap_or(Color::ACCENT)
+    }
+
+    fn secondary(&self) -> Color {
+        Color::new(0.25, 0.25, 0.27, 1.0)
+    }
+
+    fn foreground(&self) -> Color {
+        Color::new(0.92, 0.92, 0.94, 1.0)
+    }
+
+    fn title_text(&self, content: String) -> Text {
+        Text::new(content)
+            .font_size(22.0)
+            .bold()
+            .color(Color::new(0.95, 0.95, 0.96, 1.0))
+    }
+
+    fn primary_button(&self, label: String, action: &str) -> Button {
+        Button::new(label)
+            .background(self.accent())
+            .text_color(Color::WHITE)
+            .corner_radius(10.0)
+            .padding(28.0, 10.0)
+            .on_custom(action)
+    }
+
+    fn back_button(&self) -> Button {
+        Button::new(self.back())
+            .background(self.secondary())
+            .text_color(self.foreground())
+            .corner_radius(10.0)
+            .padding(28.0, 10.0)
+            .on_custom("back")
+    }
+
+    fn option_button(&self, label: String, selected: bool, action: &str) -> Button {
+        Button::new(label)
+            .background(if selected {
+                self.accent()
+            } else {
+                self.secondary()
+            })
+            .text_color(if selected {
+                Color::WHITE
+            } else {
+                self.foreground()
+            })
+            .corner_radius(10.0)
+            .padding(24.0, 12.0)
+            .width(320.0)
+            .on_custom(action)
+    }
+
+    fn gap(&self, height: f32) -> Frame {
+        Frame::new().height(height).child(Text::new(""))
     }
 
     fn build_view(&self) -> Box<dyn Widget> {
-        match self.screen {
+        let screen = match self.screen {
             Screen::Destination => self.build_destination(),
             Screen::License => self.build_license(),
             Screen::Install => self.build_install(),
             Screen::Done => self.build_done(),
-        }
-    }
-
-    fn build_destination(&self) -> Box<dyn Widget> {
-        let title = Text::new(t(&self.lang, "where.title", &[]))
-            .font_size(22.0)
-            .bold()
-            .color(Color::new(0.95, 0.95, 0.96, 1.0));
-
-        let all_btn = self
-            .option_button("option.all", self.all_users)
-            .on_custom("select_all");
-        let self_btn = self
-            .option_button("option.self", !self.all_users)
-            .on_custom("select_self");
-
-        let next_btn = Button::new(self.next())
-            .background(Color::from_hex("#FF6B2B").unwrap())
-            .text_color(Color::WHITE)
-            .corner_radius(10.0)
-            .padding(28.0, 10.0)
-            .on_custom("next");
-
+        };
         Box::new(
-            VStack::new()
-                .spacing(14.0)
-                .alignment(HAlignment::Center)
-                .child(title)
-                .child(Text::new("").height(8.0))
-                .child(all_btn)
-                .child(self_btn)
-                .child(Text::new("").height(12.0))
-                .child(next_btn),
+            PaddingWrap::new(Padding::new(36.0, 0.0, 0.0, 0.0))
+                .child(Frame::new().size(720.0, 680.0).child(screen)),
         )
     }
 
-    fn build_license(&self) -> Box<dyn Widget> {
-        let title = Text::new(t(&self.lang, "license.title", &[]))
-            .font_size(22.0)
-            .bold()
-            .color(Color::new(0.95, 0.95, 0.96, 1.0));
-
-        let license_text = self
-            .payload
-            .license
-            .clone()
-            .unwrap_or_default();
-
-        let accept_btn = Button::new(t(&self.lang, "button.accept", &[]))
-            .background(Color::from_hex("#FF6B2B").unwrap())
-            .text_color(Color::WHITE)
-            .corner_radius(10.0)
-            .padding(28.0, 10.0)
-            .on_custom("next");
-        let back_btn = Button::new(self.back())
-            .background(Color::new(0.25, 0.25, 0.27, 1.0))
-            .text_color(Color::new(0.92, 0.92, 0.94, 1.0))
-            .corner_radius(10.0)
-            .padding(28.0, 10.0)
-            .on_custom("back");
-
-        Box::new(
-            VStack::new()
-                .spacing(14.0)
-                .alignment(HAlignment::Center)
-                .child(title)
-                .child(LicenseScroll(license_text))
-                .child(
-                    HStack::new()
-                        .spacing(12.0)
-                        .child(back_btn)
-                        .child(accept_btn),
-                ),
-        )
+    fn build_destination(&self) -> VStack {
+        VStack::new()
+            .spacing(16.0)
+            .alignment(HAlignment::Center)
+            .child(self.title_text(t(&self.lang, "where.title", &[])))
+            .child(self.gap(12.0))
+            .child(self.option_button(
+                t(&self.lang, "option.all", &[]),
+                self.all_users,
+                "select_all",
+            ))
+            .child(self.option_button(
+                t(&self.lang, "option.self", &[("user", &username())]),
+                !self.all_users,
+                "select_self",
+            ))
+            .child(self.gap(24.0))
+            .child(self.primary_button(self.next(), "next"))
     }
 
-    fn build_install(&self) -> Box<dyn Widget> {
-        let title = Text::new(t(
-            &self.lang,
-            "install.title",
-            &[("name", &self.payload.footer.name)],
-        ))
-        .font_size(22.0)
-        .bold()
-        .color(Color::new(0.95, 0.95, 0.96, 1.0));
+    fn build_license(&self) -> VStack {
+        let license_text = self.payload.license.clone().unwrap_or_default();
+        let scroll = ScrollView::new().content(
+            View::new(Label::new(wrap_text(&license_text, LICENSE_WRAP_CHARS)).font_size(13.0)),
+        );
 
-        let install_btn = Button::new(t(&self.lang, "button.install", &[]))
-            .background(Color::from_hex("#FF6B2B").unwrap())
-            .text_color(Color::WHITE)
-            .corner_radius(12.0)
-            .padding(48.0, 16.0)
-            .on_custom("install");
-        let back_btn = Button::new(self.back())
-            .background(Color::new(0.25, 0.25, 0.27, 1.0))
-            .text_color(Color::new(0.92, 0.92, 0.94, 1.0))
-            .corner_radius(10.0)
-            .padding(28.0, 10.0)
-            .on_custom("back");
-
-        Box::new(
-            VStack::new()
-                .spacing(24.0)
-                .alignment(HAlignment::Center)
-                .child(title)
-                .child(install_btn)
-                .child(back_btn),
-        )
+        VStack::new()
+            .spacing(16.0)
+            .alignment(HAlignment::Center)
+            .child(self.title_text(t(&self.lang, "license.title", &[])))
+            .child(Frame::new().size(640.0, 400.0).child(scroll))
+            .child(self.back_button())
+            .child(self.primary_button(t(&self.lang, "button.accept", &[]), "next"))
     }
 
-    fn build_done(&self) -> Box<dyn Widget> {
+    fn build_install(&self) -> VStack {
+        VStack::new()
+            .spacing(16.0)
+            .alignment(HAlignment::Center)
+            .child(self.title_text(t(
+                &self.lang,
+                "install.title",
+                &[("name", &self.payload.footer.name)],
+            )))
+            .child(Text::new(format!(
+                "{} {}",
+                self.payload.footer.name, self.payload.footer.version
+            ))
+            .font_size(15.0)
+            .color(self.foreground()))
+            .child(self.gap(24.0))
+            .child(self.primary_button(t(&self.lang, "button.install", &[]), "install"))
+            .child(self.back_button())
+    }
+
+    fn build_done(&self) -> VStack {
         let message = match &self.result {
             Ok(target) => t(
                 &self.lang,
@@ -271,25 +367,18 @@ impl InstallerDelegate {
             ),
             Err(err) => t(&self.lang, "done.error", &[("error", err)]),
         };
-        let text = Text::new(message)
-            .font_size(16.0)
-            .max_width(440.0)
-            .color(Color::new(0.92, 0.92, 0.94, 1.0));
 
-        let close_btn = Button::new(t(&self.lang, "button.close", &[]))
-            .background(Color::from_hex("#FF6B2B").unwrap())
-            .text_color(Color::WHITE)
-            .corner_radius(10.0)
-            .padding(28.0, 10.0)
-            .on_custom("__close");
-
-        Box::new(
-            VStack::new()
-                .spacing(20.0)
-                .alignment(HAlignment::Center)
-                .child(text)
-                .child(close_btn),
-        )
+        VStack::new()
+            .spacing(16.0)
+            .alignment(HAlignment::Center)
+            .child(
+                Text::new(message)
+                    .font_size(16.0)
+                    .max_width(640.0)
+                    .color(self.foreground()),
+            )
+            .child(self.gap(24.0))
+            .child(self.primary_button(t(&self.lang, "button.close", &[]), "__close"))
     }
 
     fn do_install(&self) -> Result<String, String> {
@@ -302,14 +391,14 @@ impl InstallerDelegate {
                 .status()
                 .map_err(|e| format!("cannot run pkexec: {}", e))?;
             if status.success() {
-                Ok("/Applications".to_string())
+                Ok(format!("/Applications/{}.app", self.payload.footer.name))
             } else {
                 Err("pkexec failed".to_string())
             }
         } else {
             let target = format!("/Users/{}/Applications", username());
-            extract_to(&self.payload, Path::new(&target))?;
-            Ok(target)
+            let dest = install_bundle(&self.payload, Path::new(&target))?;
+            Ok(dest.to_string_lossy().to_string())
         }
     }
 }
@@ -354,39 +443,12 @@ impl AppDelegate for InstallerDelegate {
     }
 }
 
-struct LicenseScroll(String);
-
-impl Widget for LicenseScroll {
-    fn id(&self) -> WidgetId {
-        0
-    }
-
-    fn to_gtk(&self) -> gtk::Widget {
-        let scrolled = gtk::ScrolledWindow::new();
-        scrolled.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Automatic);
-        scrolled.set_width_request(460);
-        scrolled.set_height_request(320);
-        scrolled.set_hexpand(true);
-
-        let label = gtk::Label::new(Some(&self.0));
-        label.set_wrap(true);
-        label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
-        label.set_xalign(0.0);
-        label.set_yalign(0.0);
-        label.set_halign(gtk::Align::Fill);
-        label.set_valign(gtk::Align::Start);
-        label.set_margin_start(8);
-        label.set_margin_end(8);
-        scrolled.set_child(Some(&label));
-
-        scrolled.upcast()
-    }
-}
-
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|a| a == SYSTEM_INSTALL_ARG) {
-        match read_payload().and_then(|payload| extract_to(&payload, Path::new("/Applications"))) {
+        match read_payload().and_then(|payload| {
+            install_bundle(&payload, Path::new("/Applications")).map(|_| ())
+        }) {
             Ok(()) => std::process::exit(0),
             Err(err) => {
                 eprintln!("error: {}", err);
@@ -413,8 +475,8 @@ fn main() {
         result: Err("".to_string()),
     };
 
-    let mut app = App::with_delegate(title, 540, 560, delegate);
-    app.auto_color_scheme();
+    let mut app = App::with_delegate(title, 720, 680, delegate);
+    app.set_color_scheme(detect_scheme());
     app.set_glass(0.25, 0.65, 20.0);
     app.run();
 }

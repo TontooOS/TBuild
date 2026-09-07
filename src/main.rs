@@ -2,6 +2,7 @@ use clap::Parser;
 use serde_json::Value;
 use std::fs::{self, File};
 use std::io::BufWriter;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use walkdir::WalkDir;
@@ -154,6 +155,13 @@ fn build_app(project: &Path, out_dir: &Path) -> Result<AppArtifact, String> {
 
     let zip_path = out_dir.join(format!("{}.app", name));
     zip_dir(&app_dir, &zip_path)?;
+    // Mark the bundle executable so binfmt_misc can dispatch "./Foo.app" to tapp.
+    let mut perms = fs::metadata(&zip_path)
+        .map_err(|e| format!("cannot read metadata of '{}': {}", zip_path.display(), e))?
+        .permissions();
+    PermissionsExt::set_mode(&mut perms, 0o755);
+    fs::set_permissions(&zip_path, perms)
+        .map_err(|e| format!("cannot set permissions on '{}': {}", zip_path.display(), e))?;
     let _ = fs::remove_dir_all(&staging);
 
     Ok(AppArtifact {

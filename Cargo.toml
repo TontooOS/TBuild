@@ -1,6 +1,6 @@
 [package]
 name = "tbuild"
-version = "0.1.0"
+version = "26.1.0"
 edition = "2021"
 license = "TCL"
 description = "TontooOS app builder"

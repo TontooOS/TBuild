@@ -66,16 +66,21 @@ after every action.
 
 | Selection | Target | Admin |
 |---|---|---|
-| My Self | `/Users/<username>/Applications/` | none |
-| All Users | `/Applications/` | `pkexec` |
+| My Self | `/Users/<username>/Applications/<Name>.app/` | none |
+| All Users | `/Applications/<Name>.app/` | `pkexec` |
 
-Only the `.app` is placed into the target directory; nothing else is written.
+The installer extracts the bundle into `<Target>/<Name>.app/` as a directory
+bundle so apps launch directly from disk without unpacking at runtime. The
+extraction goes into a hidden staging directory first and is renamed into
+place, so a crash never leaves a half-installed bundle behind. Anything
+already occupying the target path (an older folder install or a single-file
+zipped install from previous versions) is removed first.
 
 ### All Users / Admin
 
 For All Users installs the installer re-executes itself through `pkexec` with
 the internal `--install-system` argument. The polkit prompt requests admin
-rights; the root instance extracts the `.app` into `/Applications` and exits.
+rights; the root instance installs the bundle into `/Applications` and exits.
 `Returns Err` when `pkexec` is unavailable or fails.
 
 ## Localization

@@ -39,8 +39,8 @@ pub fn make_tinstaller(project: &Path, out_dir: &Path, app: &AppArtifact) -> Res
     out.extend_from_slice(&exe_bytes);
     out.extend_from_slice(&app_bytes);
     out.extend_from_slice(&license_bytes);
-    out.extend_from_slice(&(footer_bytes.len() as u32).to_le_bytes());
     out.extend_from_slice(&footer_bytes);
+    out.extend_from_slice(&(footer_bytes.len() as u32).to_le_bytes());
     out.extend_from_slice(MAGIC);
 
     let out_path = out_dir.join(format!("{}.tinstaller", app.name));

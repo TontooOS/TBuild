@@ -79,6 +79,9 @@ The `name` field is localized from the `name` key of each language file. The
   `[package] name`.
 - The binary is made executable (`0o755`) and all ZIP entries store Unix
   permissions `0o755`.
+- The finished `.app` ZIP file itself gets mode `0o755`, so executing it
+  directly (`./Demo.app`) dispatches through the system runner via
+  `binfmt_misc`.
 - `Resources/` is copied recursively into `Resources/` of the bundle. The icon
   from `tontoo.proj` is copied to both `App/icon.png` and `Resources/icon.png`.
 - `Returns Err` when `tontoo.proj` is missing or misses `name`, `version` or
@@ -89,3 +92,4 @@ The `name` field is localized from the `name` key of each language file. The
 
 - [Tinstaller.md](Tinstaller.md) – packs the `.app` into a `.tinstaller`
 - [MAIN.md](MAIN.md) – overview
+- FishRunner (`tapp`) – launches the `.app` bundles on TontooOS

@@ -36,5 +36,10 @@ See [App.md](App.md) and [Tinstaller.md](Tinstaller.md) for details.
 
 ## Changelog
 
+- 2026-08-25: Install format finalized macOS-style: the `.tinstaller` extracts
+  the bundle as a directory (`<Name>.app/`) atomically via a staging rename,
+  replacing any older folder or single-file install. Built `.app` ZIP files
+  stay executable so downloaded bundles launch directly through the `tapp`
+  binfmt handler.
 - 2026-08-20: Initial wiki, `.app` builder and `.tinstaller` maker, installer
   template with TontooUIKit wizard UI (`lang/en_us.json` + `lang/de_de.json`).

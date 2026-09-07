@@ -3,12 +3,6 @@
 TontooOS app builder — compiles Rust app projects into `.app` bundles and
 self-extracting `.tinstaller` installers.
 
-## Wiki
-
-- [wiki/MAIN.md](wiki/MAIN.md) – feature index and quick start
-- [wiki/App.md](wiki/App.md) – `.app` bundle builder
-- [wiki/Tinstaller.md](wiki/Tinstaller.md) – `.tinstaller` installer maker
-
 ## Usage
 
 ```bash
