@@ -1,5 +1,12 @@
+//! `.tinstaller` packer: self-extracting installer binary with the TAPP
+//! `.app` container and the license appended.
+//!
+//! Layout: `[installer ELF][.app TAPP][license bytes][footer JSON]`
+//! + `[u32 LE footer_len][TONTINST]`. The footer is fixed-schema JSON
+//! (built without dependencies); the installer runtime parses it with
+//! Foundation and extracts the container with ArchiveKit.
+
 use crate::AppArtifact;
-use serde_json::json;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -7,6 +14,23 @@ use std::process::Command;
 
 const MAGIC: &[u8; 8] = b"TONTINST";
 const LICENSE_NAMES: [&str; 3] = ["license.md", "license.txt", "license"];
+
+/// Minimal JSON string escaping for the fixed footer schema.
+fn json_escape(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len() + 2);
+    for c in raw.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if c.is_control() => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out
+}
 
 pub fn make_tinstaller(project: &Path, out_dir: &Path, app: &AppArtifact) -> Result<PathBuf, String> {
     let installer_exe = build_installer_binary()?;
@@ -20,15 +44,15 @@ pub fn make_tinstaller(project: &Path, out_dir: &Path, app: &AppArtifact) -> Res
         None => Vec::new(),
     };
 
-    let footer = json!({
-        "magic": "tontinstaller",
-        "app_size": app_bytes.len(),
-        "license_size": license_bytes.len(),
-        "name": app.name,
-        "bundle_id": app.bundle_id,
-        "version": app.version,
-    });
-    let footer_bytes = serde_json::to_vec(&footer).map_err(|e| format!("cannot serialize footer: {}", e))?;
+    let footer = format!(
+        "{{\"magic\":\"tontinstaller\",\"app_size\":{},\"license_size\":{},\"name\":\"{}\",\"bundle_id\":\"{}\",\"version\":\"{}\"}}",
+        app_bytes.len(),
+        license_bytes.len(),
+        json_escape(&app.name),
+        json_escape(&app.bundle_id),
+        json_escape(&app.version),
+    );
+    let footer_bytes = footer.into_bytes();
 
     let exe_bytes = fs::read(&installer_exe)
         .map_err(|e| format!("cannot read installer binary '{}': {}", installer_exe.display(), e))?;
@@ -78,9 +102,9 @@ fn build_installer_binary() -> Result<PathBuf, String> {
 
 fn find_license(project: &Path) -> Result<Option<PathBuf>, String> {
     let mut found: Vec<(usize, PathBuf)> = Vec::new();
-    let entries = fs::read_dir(project).map_err(|e| format!("cannot list project dir: {}", e))?;
+    let entries = fs::read_dir(project).map_err(|e| format!("cannot list project dir: {e}"))?;
     for entry in entries {
-        let entry = entry.map_err(|e| format!("cannot read project dir entry: {}", e))?;
+        let entry = entry.map_err(|e| format!("cannot read project dir entry: {e}"))?;
         let name = entry.file_name().to_string_lossy().to_lowercase();
         if let Some(index) = LICENSE_NAMES.iter().position(|candidate| *candidate == name) {
             found.push((index, entry.path()));
@@ -88,4 +112,15 @@ fn find_license(project: &Path) -> Result<Option<PathBuf>, String> {
     }
     found.sort_by_key(|(index, _)| *index);
     Ok(found.into_iter().next().map(|(_, path)| path))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn footer_escapes_names() {
+        assert_eq!(json_escape("plain"), "plain");
+        assert_eq!(json_escape("a\"b\\c"), "a\\\"b\\\\c");
+    }
 }

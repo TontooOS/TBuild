@@ -12,7 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
-serde_json = { version = "1", features = ["preserve_order"] }
 toml = "0.8"
-walkdir = "2"
-zip = { version = "2", default-features = false, features = ["deflate"] }
+# TontooOS SDK: ArchiveKit (TAPP containers), CoreIcon (.tico icons),
+# Foundation (JSON). On-device: /Library/System/sdk.
+sdk = { path = "/Library/System/sdk", features = ["ArchiveKit", "CoreIcon", "Foundation"] }

@@ -8,8 +8,8 @@ folder for one user or for all users.
 ## File Format
 
 ```
-[installer binary]      # TontooUIKit wizard (compiled from installer/)
-[.app ZIP bytes]        # payload from the .app build
+[installer binary]      # TontooUI wizard (compiled from installer/)
+[.app TAPP bytes]       # payload from the .app build
 [license bytes]         # optional, 0 bytes when no license is found
 [4-byte footer length]  # little-endian u32
 [footer JSON]           # sizes + metadata
@@ -49,18 +49,20 @@ first match wins:
 
 ## Installer UI
 
-The installer template is a separate crate at `installer/` using
-`uikit = { path = "/Library/System/uikit" }`. The wizard has three screens:
+The installer template is a separate crate at `installer/` using the SDK
+(`TontooUI`, `ArchiveKit`, `Foundation`). The wizard is TontooUI on
+Vello/WGPU (720x680, `ThemeWatcher`, orange accent) and has four screens:
 
 | Screen | Content | Next action |
 |---|---|---|
-| Destination | "Where do you want to install it?" — All Users / My Self (`%username%`) | Next |
+| Destination | "Where do you want to install it?" — All Users / My Self (`{user}`), selected marker | Next |
 | License | License text in a scroll view (skipped when no license) | Accept |
-| Install | Big Install button | Install |
+| Install | Name + version with an Install button | Install |
+| Done | Success (`{name}`, `{target}`) or error (`{error}`) message | Close |
 
-The `AppDelegate` keeps the screen state; `handle_custom` handles
-`select_all`, `select_self`, `next`, `back` and `install`. The view is rebuilt
-after every action.
+Screen state lives in shared (`Rc<RefCell<Shared>>`) state mutated by
+button `on_press` callbacks; the install runs once when requested and the
+done screen is rebuilt with the result. `Escape` closes the window.
 
 ### Install Targets
 
@@ -69,12 +71,13 @@ after every action.
 | My Self | `/Users/<username>/Applications/<Name>.app/` | none |
 | All Users | `/Applications/<Name>.app/` | `pkexec` |
 
-The installer extracts the bundle into `<Target>/<Name>.app/` as a directory
-bundle so apps launch directly from disk without unpacking at runtime. The
-extraction goes into a hidden staging directory first and is renamed into
-place, so a crash never leaves a half-installed bundle behind. Anything
-already occupying the target path (an older folder install or a single-file
-zipped install from previous versions) is removed first.
+The installer extracts the TAPP container (`AppReader::extract_to`) into
+`<Target>/<Name>.app/` as a directory bundle so apps launch directly from
+disk without unpacking at runtime. The extraction goes into a hidden staging
+directory first and is renamed into place, so a crash never leaves a
+half-installed bundle behind. Anything already occupying the target path (an
+older folder install or a single-file install from previous versions) is
+removed first.
 
 ### All Users / Admin
 
@@ -86,10 +89,11 @@ rights; the root instance installs the bundle into `/Applications` and exits.
 ## Localization
 
 The installer strings live in `installer/lang/en_us.json` and
-`installer/lang/de_de.json`, embedded via `include_str!`. The active locale is
-detected from `LANG`, `LC_ALL` or `/etc/locale.conf` (`de_*` selects German,
-everything else English). Templates use `{name}`, `{user}`, `{target}` and
-`{error}` placeholders.
+`installer/lang/de_de.json` (Accessibility shape), embedded via
+`include_str!` and parsed with Foundation. The active locale is detected
+from `LANGUAGE`, `LANG`, `LC_ALL` or `/etc/locale.conf` (`de_*` selects
+German, everything else English). Templates use `{name}`, `{user}`,
+`{target}` and `{error}` placeholders.
 
 ## Cross References
 

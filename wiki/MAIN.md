@@ -36,9 +36,13 @@ See [App.md](App.md) and [Tinstaller.md](Tinstaller.md) for details.
 
 ## Changelog
 
+- 2026-09-27: TAPP containers: `.app` files are indexed ArchiveKit containers
+  (fico manifest, `.tico` icons, still `.app` extension) instead of ZIPs;
+  readers only load manifest, icon and binary. Installer wizard ported to the
+  new TontooUI on Vello/WGPU; SDK from `/Library/System/sdk`.
 - 2026-08-25: Install format finalized macOS-style: the `.tinstaller` extracts
   the bundle as a directory (`<Name>.app/`) atomically via a staging rename,
-  replacing any older folder or single-file install. Built `.app` ZIP files
+  replacing any older folder or single-file install. Built `.app` files
   stay executable so downloaded bundles launch directly through the `tapp`
   binfmt handler.
 - 2026-08-20: Initial wiki, `.app` builder and `.tinstaller` maker, installer
