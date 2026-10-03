@@ -36,6 +36,17 @@ See [App.md](App.md) and [Tinstaller.md](Tinstaller.md) for details.
 
 ## Changelog
 
+- 2026-10-02: Two icon fixes. (1) A raster project icon is now exported as
+  one full-bleed `LayerContent::image` layer over a transparent background
+  (the recipe from `CoreIcon/examples/tico_from_png`); the old code built a
+  background-only canvas, which ArchiveKit rejects with `tico has no
+  layers`, so every raster-icon app failed to build. (2) A project icon
+  that already is a `.tico` is detected by extension and passed through
+  byte for byte instead of being raster-decoded, which fixes the projects
+  that ship a finished icon (Xcode, Terminal). New result: raster and
+  `.tico` sources produce the same container, with `App/icon.tico` and
+  `Resources/icon.tico` byte-identical to a passed-through source. See
+  [App.md](App.md).
 - 2026-09-27: TAPP containers: `.app` files are indexed ArchiveKit containers
   (fico manifest, `.tico` icons, still `.app` extension) instead of ZIPs;
   readers only load manifest, icon and binary. Installer wizard ported to the

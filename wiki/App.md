@@ -29,7 +29,7 @@ helloworld/
 | `bundle_id` | `string` | Global unique app identifier, e.g. `com.tontoo.helloworld` |
 | `name` | `string` | App name, e.g. `HelloWorld` |
 | `version` | `string` | Version, e.g. `0.1.0` |
-| `icon` | `string` | Path to the icon (PNG) relative to the project dir |
+| `icon` | `string` | Path to the icon (raster or `.tico`) relative to the project dir |
 
 Example:
 
@@ -79,12 +79,33 @@ app {
 
 ### Icons
 
-The project icon (PNG from `tontoo.proj`, else `Resources/icon.png`) is
-converted into `.tico` via CoreIcon (artwork kept, Liquid Glass finish)
-and stored as both `App/icon.tico` and `Resources/icon.tico`. The source
-PNG is skipped when staging `Resources/`, so the container never holds
-both. Without a source icon the manifest has no `icon` field and readers
-fall back to their placeholder.
+The project icon comes from `tontoo.proj` (`icon`), else
+`Resources/icon.png`. It may be either a raster (PNG, JPG, ...) or an
+already built `.tico`:
+
+| Source | Handling |
+|---|---|
+| Raster | Converted to `.tico` via CoreIcon |
+| `.tico` (by file extension) | Passed through byte for byte |
+
+Either way the result is stored as both `App/icon.tico` and
+`Resources/icon.tico`, and the source file is skipped when staging
+`Resources/`, so the container never holds both. Without a source icon
+the manifest has no `icon` field and readers fall back to their
+placeholder.
+
+> **Note:** A raster becomes exactly one full-bleed
+> `LayerContent::image` layer over a transparent background, matching
+> `CoreIcon/examples/tico_from_png`. ArchiveKit rejects a container with an
+> empty layer table (`tico has no layers`), so a canvas that carries only a
+> background cannot be exported at all. The layer is stored
+> non-recolorable and keeps its colors; `TicoIcon::render` adds the Apple
+> app-icon finish later.
+
+> **Note:** A `.tico` source is detected purely by extension and never
+> decoded, so a project can ship a finished layered icon (Xcode,
+> Terminal, SystemOverview) and skip the conversion entirely. The bundled
+> bytes are identical to the project file.
 
 ## Behavior
 

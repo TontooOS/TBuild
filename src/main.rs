@@ -1,12 +1,17 @@
 //! TBuild: builds TontooOS `.app` containers (TAPP format, `.app` extension).
 //!
 //! Stages the release binary plus `Resources/` into `<Name>.app/` with an
-//! `App/` dir, converts the project icon (PNG) into `.tico` via CoreIcon,
-//! writes the manifest (`Info.tontoo`, fico syntax) and packs everything
-//! with ArchiveKit (`AppBuilder`). The container carries a central
-//! directory, so readers (FishRunner, CoreWindows, AboutThisApp) only load
-//! the entries they need (manifest, icon, binary) instead of extracting
-//! the whole app.
+//! `App/` dir, turns the project icon into `.tico`, writes the manifest
+//! (`Info.tontoo`, fico syntax) and packs everything with ArchiveKit
+//! (`AppBuilder`). The container carries a central directory, so readers
+//! (FishRunner, CoreWindows, AboutThisApp) only load the entries they
+//! need (manifest, icon, binary) instead of extracting the whole app.
+//!
+//! The project icon (`tontoo.proj` `icon`, default
+//! `Resources/icon.png`) may be either a raster (PNG, JPG, ...) or an
+//! already built `.tico`. A raster is converted through CoreIcon; a
+//! `.tico` is passed through byte for byte, so a project can ship a
+//! finished icon and skip the conversion.
 
 use clap::Parser;
 use std::fs;
@@ -17,7 +22,8 @@ use std::process::Command;
 sdk::preinclude!();
 
 use crate::ArchiveKit::{AppBuilder, AppManifest};
-use crate::CoreIcon::generator::{Background, IconCanvas};
+use crate::CoreIcon::Color;
+use crate::CoreIcon::generator::{Background, IconCanvas, Layer, LayerContent, CANVAS_SIZE};
 use crate::CoreIcon::tico::Tico;
 use crate::Foundation::serialization::{JSONSerialization, JsonDocument};
 
@@ -135,8 +141,10 @@ fn build_app(project: &Path, out_dir: &Path) -> Result<AppArtifact, String> {
     fs::set_permissions(bin_dir.join(&binary), perms)
         .map_err(|e| format!("cannot set binary permissions: {e}"))?;
 
-    // Project icon source (PNG): converted to .tico below and therefore
-    // skipped when staging Resources, so the container never holds both.
+    // Project icon source: a raster is converted to `.tico` below, an
+    // existing `.tico` is passed through. Either way the source is skipped
+    // when staging Resources, so the container never holds both the
+    // project file and the bundled `icon.tico`.
     let proj_icon = proj
         .str_field("icon")
         .map_err(|e| format!("cannot parse '{PROJ_FILE}': {e}"))?
@@ -146,6 +154,10 @@ fn build_app(project: &Path, out_dir: &Path) -> Result<AppArtifact, String> {
         .canonicalize()
         .ok()
         .filter(|p| p.is_file());
+    // Raster sources are rebuilt; `.tico` sources are already finished.
+    let icon_is_tico = icon_source
+        .as_deref()
+        .is_some_and(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("tico")));
 
     let proj_resources = project.join("Resources");
     if proj_resources.is_dir() {
@@ -160,7 +172,7 @@ fn build_app(project: &Path, out_dir: &Path) -> Result<AppArtifact, String> {
         manifest.names.push((locale, display));
     }
 
-    // Pack staging (App/ + Resources/) plus the generated .tico icons.
+    // Pack staging (App/ + Resources/) plus the `.tico` icons.
     // The manifest covers Info.tontoo, so pack_tree never sees one.
     let mut builder = AppBuilder::new(&name)
         .map_err(|e| format!("cannot create app container: {e}"))?;
@@ -168,8 +180,14 @@ fn build_app(project: &Path, out_dir: &Path) -> Result<AppArtifact, String> {
     builder
         .pack_tree(&app_dir)
         .map_err(|e| format!("cannot pack '{}': {e}", app_dir.display()))?;
-    if let Some(png) = icon_source {
-        let tico = build_icon_tico(&png, &name)?;
+    if let Some(source) = icon_source {
+        let tico = if icon_is_tico {
+            std::fs::read(&source).map_err(|e| {
+                format!("cannot read icon '{}': {e}", source.display())
+            })?
+        } else {
+            build_icon_tico(&source, &name)?
+        };
         builder
             .add_icon_tico("App/icon.tico", tico.clone())
             .map_err(|e| format!("cannot add App/icon.tico: {e}"))?;
@@ -260,12 +278,23 @@ fn bundle_names(lang_dir: &Path) -> Vec<(String, String)> {
     names
 }
 
-/// Convert the project icon (PNG) into `.tico` bytes via CoreIcon
-/// (artwork kept, Liquid Glass finish baked into layers).
+/// Convert a raster project icon into `.tico` bytes via CoreIcon.
+///
+/// The artwork becomes exactly one full-bleed `LayerContent::image`
+/// layer over a transparent background, matching
+/// `CoreIcon/examples/tico_from_png`: ArchiveKit rejects a container with
+/// an empty layer table, so a canvas that only carries a background
+/// cannot be exported at all. The layer is stored non-recolorable, so it
+/// keeps its colors and the Apple app-icon finish is applied later by
+/// `TicoIcon::render` instead of being baked in.
 fn build_icon_tico(png: &Path, app_name: &str) -> Result<Vec<u8>, String> {
     let canvas = IconCanvas::new()
-        .background(Background::image(png.to_string_lossy().to_string()))
-        .glass();
+        .background(Background::color(Color::new(0.0, 0.0, 0.0, 0.0)))
+        .layer(
+            Layer::new(LayerContent::image(png.to_string_lossy().to_string()))
+                .position(0.0, 0.0)
+                .size(CANVAS_SIZE as f32, CANVAS_SIZE as f32),
+        );
     let out = std::env::temp_dir().join(format!(
         "tbuild-icon-{}.tico",
         app_name
